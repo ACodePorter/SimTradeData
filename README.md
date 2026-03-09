@@ -1,385 +1,396 @@
-# SimTradeData - 高效量化交易数据下载工具
+English | [中文](README_zh.md)
 
-> **BaoStock + Mootdx + yfinance 多数据源** | **A股 + 美股** | **PTrade格式兼容** | **DuckDB + Parquet存储**
+# SimTradeData - Quantitative Trading Data Downloader
 
-**SimTradeData** 是为 [SimTradeLab](https://github.com/kay-ou/SimTradeLab) 设计的高效数据下载工具。支持 A 股（BaoStock、Mootdx）和美股（yfinance）多数据源，各取所长自动编排，采用 DuckDB 作为中间存储，导出为 Parquet 格式，支持高效的增量更新和数据查询。
+> **BaoStock + Mootdx + yfinance Multi-Source** | **China A-Shares + US Stocks** | **PTrade Compatible** | **DuckDB + Parquet Storage**
+
+**SimTradeData** is an efficient data download tool designed for [SimTradeLab](https://github.com/kay-ou/SimTradeLab). It supports China A-shares (BaoStock, Mootdx) and US stocks (yfinance) from multiple data sources, automatically orchestrating each source's strengths. Data is stored in DuckDB as intermediate storage and exported to Parquet format, with efficient incremental updates and querying.
 
 ---
 
 <div align="center">
 
-### 推荐组合：SimTradeData + SimTradeLab
+### Recommended Combo: SimTradeData + SimTradeLab
 
-**完全兼容PTrade | A股+美股 | 回测速度提升20倍以上**
+**Fully PTrade Compatible | A-Shares + US Stocks | 20x+ Backtesting Speedup**
 
-[![SimTradeLab](https://img.shields.io/badge/SimTradeLab-量化回测框架-blue?style=for-the-badge)](https://github.com/kay-ou/SimTradeLab)
+[![SimTradeLab](https://img.shields.io/badge/SimTradeLab-Quant_Backtesting-blue?style=for-the-badge)](https://github.com/kay-ou/SimTradeLab)
 
-**无需修改PTrade策略代码** | **极速本地回测** | **零成本解决方案**
+**No PTrade Strategy Code Changes Needed** | **Ultra-Fast Local Backtesting** | **Zero-Cost Solution**
 
 </div>
 
 ---
 
-## 核心特性
+## Key Features
 
-### 高效存储架构
-- **DuckDB 中间存储**: 高性能列式数据库，支持 SQL 查询和增量更新
-- **Parquet 导出格式**: 压缩高效，跨平台兼容，适合大规模数据分析
-- **自动增量更新**: 智能识别已下载数据，仅更新增量部分
+### Efficient Storage Architecture
+- **DuckDB Intermediate Storage**: High-performance columnar database with SQL queries and incremental updates
+- **Parquet Export Format**: Highly compressed, cross-platform compatible, ideal for large-scale data analysis
+- **Automatic Incremental Updates**: Intelligently detects existing data, only downloads new records
 
-### 数据完整性
-- **市场数据**: OHLCV 日线数据，含涨跌停价、前收盘价
-- **估值指标**: PE/PB/PS/PCF/换手率/总股本/流通股
-- **财务数据**: 23个季度财务指标 + TTM指标自动计算
-- **除权除息**: 分红、送股、配股数据
-- **复权因子**: 前复权/后复权因子
-- **元数据**: 股票信息、交易日历、指数成分股、ST/停牌状态
-- **美股支持**: 6000+ 美股普通股，S&P 500 / NASDAQ-100 指数成分股
+### Comprehensive Data Coverage
+- **Market Data**: OHLCV daily bars with limit-up/down prices and previous close
+- **Valuation Metrics**: PE/PB/PS/PCF/Turnover Rate/Total Shares/Float Shares
+- **Financial Data**: 23 quarterly financial indicators + automatic TTM calculation
+- **Corporate Actions**: Dividends, bonus shares, rights offerings
+- **Adjustment Factors**: Forward and backward adjustment factors
+- **Metadata**: Stock info, trading calendar, index constituents, ST/suspension status
+- **US Stock Support**: 6,000+ US common stocks, S&P 500 / NASDAQ-100 index constituents
 
-### 数据质量保障
-- **自动验证**: 写入前自动验证数据完整性
-- **导出时计算**: 涨跌停价、TTM指标等在导出时计算，确保数据一致性
-- **详细日志**: 完整的错误日志和警告信息
+### Data Quality Assurance
+- **Auto-Validation**: Data integrity validation before writes
+- **Export-Time Calculation**: Limit prices, TTM metrics computed at export for consistency
+- **Detailed Logging**: Comprehensive error logs and warnings
 
-## 生成的数据结构
+## Generated Data Structure
 
 ```
 data/
-├── simtradedata.duckdb          # DuckDB 数据库 - A股（下载时使用）
-├── us_stocks.duckdb             # DuckDB 数据库 - 美股（下载时使用）
-└── parquet/                     # 导出的 Parquet 文件
-    ├── stocks/                  # 股票日线行情（每股票一个文件）
+├── simtradedata.duckdb          # DuckDB database - A-shares (used during download)
+├── us_stocks.duckdb             # DuckDB database - US stocks (used during download)
+└── parquet/                     # Exported Parquet files
+    ├── stocks/                  # Daily stock bars (one file per stock)
     │   ├── 000001.SZ.parquet
     │   └── 600000.SS.parquet
-    ├── exrights/                # 除权除息事件
-    ├── fundamentals/            # 季度财务数据（含TTM）
-    ├── valuation/               # 估值指标（日频）
-    ├── metadata/                # 元数据
+    ├── exrights/                # Corporate action events
+    ├── fundamentals/            # Quarterly financials (with TTM)
+    ├── valuation/               # Valuation metrics (daily frequency)
+    ├── metadata/                # Metadata
     │   ├── stock_metadata.parquet
     │   ├── benchmark.parquet
     │   ├── trade_days.parquet
     │   ├── index_constituents.parquet
     │   ├── stock_status.parquet
     │   └── version.parquet
-    ├── ptrade_adj_pre.parquet   # 前复权因子
-    ├── ptrade_adj_post.parquet  # 后复权因子
-    └── manifest.json            # 数据包清单
+    ├── ptrade_adj_pre.parquet   # Forward adjustment factors
+    ├── ptrade_adj_post.parquet  # Backward adjustment factors
+    └── manifest.json            # Data package manifest
 ```
 
-## 快速开始
+## Quick Start
 
-### 方式一：直接下载现成数据（推荐）
+### Option 1: Download Pre-Built Data (Recommended)
 
-已导出的 Parquet 数据包（2025年数据），可直接用于 SimTradeLab 回测：
-
-> 夸克网盘分享：[data.zip](https://pan.quark.cn/s/0e20cde4ac2a)
->
+Download the latest `simtradelab-data-*.tar.gz` from [Releases](https://github.com/kay-ou/SimTradeData/releases):
 
 ```bash
-# 解压到 SimTradeLab 数据目录
-unzip data.zip -d /path/to/SimTradeLab/data/
+# Extract to SimTradeLab data directory
+tar -xzf simtradelab-data-*.tar.gz -C /path/to/SimTradeLab/data/
 ```
 
-### 方式二：自行下载数据
+### Option 2: Download Data Yourself
 
-#### 1. 安装依赖
+#### 1. Install Dependencies
 
 ```bash
-# 克隆项目
+# Clone the project
 git clone https://github.com/kay-ou/SimTradeData.git
 cd SimTradeData
 
-# 安装依赖
+# Install dependencies
 poetry install
 
-# 激活虚拟环境
+# Activate virtual environment
 poetry shell
 ```
 
-#### 2. 下载数据
+#### 2. Download Data
 
-**推荐方式：统一下载命令**
+**Recommended: Unified Download Command**
 
-一条命令完成所有数据下载，自动编排 Mootdx 和 BaoStock 各自擅长的数据：
+A single command downloads all data, automatically orchestrating Mootdx and BaoStock for their respective strengths:
 
 ```bash
-# 完整下载（推荐）
-# Mootdx: 行情、复权因子、除权除息、批量财务、交易日历、基准指数
-# BaoStock: 估值指标、ST/停牌状态、指数成分股
+# Full download (recommended)
+# Mootdx: market data, adjustment factors, corporate actions, bulk financials, trading calendar, benchmark index
+# BaoStock: valuation metrics, ST/suspension status, index constituents
 poetry run python scripts/download.py
 
-# 查看数据状态
+# Check data status
 poetry run python scripts/download.py --status
 
-# 跳过财务数据（更快）
+# Skip financial data (faster)
 poetry run python scripts/download.py --skip-fundamentals
 
-# 仅运行 Mootdx 阶段
+# Run Mootdx phase only
 poetry run python scripts/download.py --source mootdx
 
-# 仅运行 BaoStock 阶段
+# Run BaoStock phase only
 poetry run python scripts/download.py --source baostock
 ```
 
-**数据源分工说明**
+**Data Source Division of Labor**
 
-| 数据类型 | 负责数据源 | 原因 |
-|---------|-----------|------|
-| 行情 OHLCV | Mootdx | 速度快，本地网络 |
-| 复权因子 | Mootdx | 随行情一起下载 |
-| 除权除息 (XDXR) | Mootdx | 数据更完整 |
-| 批量财务数据 | Mootdx | 一个ZIP=所有股票，远优于逐股查询 |
-| 估值 PE/PB/PS/换手率 | BaoStock | 独有数据 |
-| ST/停牌状态 | BaoStock | 独有数据 |
-| 指数成分股 | BaoStock | 独有数据 |
-| 交易日历 | Mootdx | 随行情一起 |
-| 基准指数 | Mootdx | 随行情一起 |
+| Data Type | Source | Reason |
+|-----------|--------|--------|
+| OHLCV Market Data | Mootdx | Fast, local network |
+| Adjustment Factors | Mootdx | Downloaded with market data |
+| Corporate Actions (XDXR) | Mootdx | More complete data |
+| Bulk Financial Data | Mootdx | One ZIP = all stocks, far better than per-stock queries |
+| Valuation PE/PB/PS/Turnover | BaoStock | Exclusive data |
+| ST/Suspension Status | BaoStock | Exclusive data |
+| Index Constituents | BaoStock | Exclusive data |
+| Trading Calendar | Mootdx | Comes with market data |
+| Benchmark Index | Mootdx | Comes with market data |
 
-**单独使用某个数据源**
+**Using Individual Data Sources**
 
 ```bash
-# BaoStock（包含估值数据，但速度较慢）
+# BaoStock (includes valuation data, but slower)
 poetry run python scripts/download_efficient.py
 poetry run python scripts/download_efficient.py --skip-fundamentals
-poetry run python scripts/download_efficient.py --valuation-only  # 仅估值+状态
+poetry run python scripts/download_efficient.py --valuation-only  # Valuation + status only
 
-# Mootdx（速度快，但无估值数据）
+# Mootdx (faster, but no valuation data)
 poetry run python scripts/download_mootdx.py
 poetry run python scripts/download_mootdx.py --skip-fundamentals
 ```
 
-**美股数据下载（yfinance）**
+**US Stock Data (yfinance)**
 
-使用 yfinance 免费获取美股数据，无需 API Key：
+Free US stock data via yfinance, no API key required:
 
 ```bash
-# 完整下载（6000+ 只美股，含 OHLCV + 财务 + 估值 + 元数据）
+# Full download (6,000+ US stocks with OHLCV + financials + valuation + metadata)
 poetry run python scripts/download_us.py
 
-# 指定股票（小规模测试）
+# Specific symbols (small-scale testing)
 poetry run python scripts/download_us.py --symbols AAPL,MSFT,GOOGL
 
-# 仅下载行情数据（跳过耗时的逐股财务和元数据）
+# Market data only (skip time-consuming per-stock financials and metadata)
 poetry run python scripts/download_us.py --skip-fundamentals --skip-metadata
 
-# 指定起始日期
+# Specify start date
 poetry run python scripts/download_us.py --start-date 2020-01-01
 ```
 
-美股代码格式：`AAPL.US`（与 A 股 `600000.SS` 保持 `{code}.{market}` 一致），数据存入独立数据库 `data/us_stocks.duckdb`。
+US stock ticker format: `AAPL.US` (consistent with A-shares `600000.SS` using `{code}.{market}`), stored in a separate database `data/us_stocks.duckdb`.
 
-**TDX 官方数据包（最快获取完整历史行情）**
+**TDX Official Data Package (Fastest Way to Get Full Historical Data)**
 
 ```bash
-# 自动下载通达信官方沪深京日线完整包（~500MB）
+# Auto-download official TDX Shanghai/Shenzhen/Beijing daily data package (~500MB)
 poetry run python scripts/download_tdx_day.py
 
-# 强制重新下载
+# Force re-download
 poetry run python scripts/download_tdx_day.py --force-download
 
-# 使用已下载的文件
+# Use an already-downloaded file
 poetry run python scripts/download_tdx_day.py --file hsjday.zip
 ```
 
-#### 3. 导出为 Parquet
+#### 3. Export to Parquet
 
 ```bash
-# 导出为 PTrade 兼容的 Parquet 格式
+# Export to PTrade-compatible Parquet format
 poetry run python scripts/export_parquet.py
 
-# 指定输出目录
+# Specify output directory
 poetry run python scripts/export_parquet.py --output data/parquet
 ```
 
-#### 4. 在 SimTradeLab 中使用
+#### 4. Use in SimTradeLab
 
 ```bash
-# 复制 Parquet 文件到 SimTradeLab 数据目录
+# Copy Parquet files to SimTradeLab data directory
 cp -r data/parquet/* /path/to/SimTradeLab/data/
 ```
 
-## 项目架构
+## Project Architecture
 
 ```
 SimTradeData/
 ├── scripts/
-│   ├── download.py                # 统一下载入口（A股推荐）
-│   ├── download_efficient.py      # BaoStock 下载脚本
-│   ├── download_mootdx.py         # Mootdx（通达信API）下载脚本
-│   ├── download_tdx_day.py        # TDX 官方日线数据包下载导入脚本
-│   ├── download_us.py             # 美股下载脚本（yfinance）
-│   ├── import_tdx_day.py          # TDX .day 文件导入脚本
-│   └── export_parquet.py          # Parquet 导出脚本
+│   ├── download.py                # Unified download entry (recommended for A-shares)
+│   ├── download_efficient.py      # BaoStock download script
+│   ├── download_mootdx.py         # Mootdx (TDX API) download script
+│   ├── download_tdx_day.py        # TDX official daily data package download/import
+│   ├── download_us.py             # US stock download script (yfinance)
+│   ├── import_tdx_day.py          # TDX .day file import script
+│   └── export_parquet.py          # Parquet export script
 ├── simtradedata/
 │   ├── fetchers/
-│   │   ├── base_fetcher.py      # 基础 Fetcher 类
-│   │   ├── baostock_fetcher.py  # BaoStock 数据获取
-│   │   ├── unified_fetcher.py   # BaoStock 统一数据获取（优化版）
-│   │   ├── mootdx_fetcher.py    # Mootdx 基础数据获取
-│   │   ├── mootdx_unified_fetcher.py  # Mootdx 统一数据获取
-│   │   ├── mootdx_affair_fetcher.py   # Mootdx 财务数据获取
-│   │   └── yfinance_fetcher.py  # yfinance 美股数据获取
+│   │   ├── base_fetcher.py      # Base Fetcher class
+│   │   ├── baostock_fetcher.py  # BaoStock data fetching
+│   │   ├── unified_fetcher.py   # BaoStock unified fetching (optimized)
+│   │   ├── mootdx_fetcher.py    # Mootdx basic data fetching
+│   │   ├── mootdx_unified_fetcher.py  # Mootdx unified data fetching
+│   │   ├── mootdx_affair_fetcher.py   # Mootdx financial data fetching
+│   │   └── yfinance_fetcher.py  # yfinance US stock data fetching
 │   ├── processors/
-│   │   └── data_splitter.py     # 数据分流处理
+│   │   └── data_splitter.py     # Data stream splitting
 │   ├── writers/
-│   │   └── duckdb_writer.py     # DuckDB 写入和导出
+│   │   └── duckdb_writer.py     # DuckDB write and export
 │   ├── validators/
-│   │   └── data_validator.py    # 数据质量验证
+│   │   └── data_validator.py    # Data quality validation
 │   ├── config/
-│   │   ├── field_mappings.py    # A股字段映射配置
-│   │   ├── us_field_mappings.py # 美股字段映射配置
-│   │   └── mootdx_finvalue_map.py  # Mootdx 财务字段映射
+│   │   ├── field_mappings.py    # A-share field mapping config
+│   │   ├── us_field_mappings.py # US stock field mapping config
+│   │   └── mootdx_finvalue_map.py  # Mootdx financial field mapping
 │   └── utils/
-│       ├── code_utils.py        # 股票代码转换
-│       └── ttm_calculator.py    # 季度范围计算
-├── data/                        # 数据目录
-└── docs/                        # 文档
-    ├── PTRADE_PARQUET_FORMAT.md # Parquet 格式规范
+│       ├── code_utils.py        # Stock code conversion
+│       └── ttm_calculator.py    # Quarterly range calculation
+├── data/                        # Data directory
+└── docs/                        # Documentation
+    ├── PTRADE_PARQUET_FORMAT.md # Parquet format specification
     └── PTrade_API_mini_Reference.md
 ```
 
-### 核心模块
+### Core Modules
 
-**1. UnifiedDataFetcher** - 统一数据获取
-- 一次 API 调用获取行情、估值、状态数据
-- 减少 API 调用次数 33%
+**1. UnifiedDataFetcher** - Unified Data Fetching
+- Single API call fetches market, valuation, and status data
+- Reduces API calls by 33%
 
-**2. DuckDBWriter** - 数据存储和导出
-- 高效的增量写入（upsert）
-- 导出时计算涨跌停价、TTM指标
-- Forward fill 季度数据到日频
+**2. DuckDBWriter** - Data Storage and Export
+- Efficient incremental writes (upsert)
+- Computes limit prices and TTM metrics at export time
+- Forward-fills quarterly data to daily frequency
 
-**3. DataSplitter** - 数据分流
-- 将统一数据按类型分流到不同表
+**3. DataSplitter** - Data Stream Splitting
+- Routes unified data to appropriate tables by type
 
-## 数据字段说明
+## Data Field Reference
 
-### stocks/ - 股票日线
-| 字段 | 说明 |
-|------|------|
-| date | 交易日期 |
-| open/high/low/close | OHLC价格 |
-| high_limit/low_limit | 涨跌停价（导出时计算） |
-| preclose | 前收盘价 |
-| volume | 成交量（股） |
-| money | 成交金额（元） |
+### stocks/ - Daily Stock Bars
+| Field | Description |
+|-------|-------------|
+| date | Trading date |
+| open/high/low/close | OHLC prices |
+| high_limit/low_limit | Limit-up/down prices (computed at export) |
+| preclose | Previous close price |
+| volume | Trading volume (shares) |
+| money | Trading amount (CNY) |
 
-### valuation/ - 估值指标（日频）
-| 字段 | 说明 |
-|------|------|
-| pe_ttm/pb/ps_ttm/pcf | 估值比率 |
-| roe/roe_ttm/roa/roa_ttm | 盈利指标（季报forward fill） |
-| naps | 每股净资产（导出时计算） |
-| total_shares/a_floats | 总股本/流通股 |
-| turnover_rate | 换手率 |
+### valuation/ - Valuation Metrics (Daily)
+| Field | Description |
+|-------|-------------|
+| pe_ttm/pb/ps_ttm/pcf | Valuation ratios |
+| roe/roe_ttm/roa/roa_ttm | Profitability metrics (forward-filled from quarterly reports) |
+| naps | Net asset per share (computed at export) |
+| total_shares/a_floats | Total shares / float shares |
+| turnover_rate | Turnover rate |
 
-### fundamentals/ - 财务数据（季频）
-包含23个财务指标及其TTM版本，详见 [PTRADE_PARQUET_FORMAT.md](docs/PTRADE_PARQUET_FORMAT.md)
+### fundamentals/ - Financial Data (Quarterly)
+Contains 23 financial indicators and their TTM versions. See [PTRADE_PARQUET_FORMAT.md](docs/PTRADE_PARQUET_FORMAT.md) for details.
 
-## 配置说明
+## Configuration
 
-编辑 `scripts/download_efficient.py`:
+Edit `scripts/download_efficient.py`:
 
 ```python
-# 日期范围
+# Date range
 START_DATE = "2017-01-01"
-END_DATE = None  # None = 当前日期
+END_DATE = None  # None = current date
 
-# 输出目录
+# Output directory
 OUTPUT_DIR = "data"
 
-# 批次大小
+# Batch size
 BATCH_SIZE = 20
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 说明 |
-|------|------|
-| [PTRADE_PARQUET_FORMAT.md](docs/PTRADE_PARQUET_FORMAT.md) | Parquet 数据格式规范 |
-| [PTrade_API_mini_Reference.md](docs/PTrade_API_mini_Reference.md) | PTrade API 参考 |
+| Document | Description |
+|----------|-------------|
+| [PTRADE_PARQUET_FORMAT.md](docs/PTRADE_PARQUET_FORMAT.md) | Parquet data format specification |
+| [PTrade_API_mini_Reference.md](docs/PTrade_API_mini_Reference.md) | PTrade API reference |
 
-## 注意事项
+## Notes
 
-### 数据源对比
+### Data Source Comparison
 
-| 特性 | BaoStock | Mootdx API | TDX 官方数据包 | yfinance (美股) |
-|------|----------|------------|---------------|----------------|
-| 市场 | A股 | A股 | A股 | 美股 |
-| 速度 | 较慢 | 快 | 最快（一次性下载） | 中等 |
-| 估值数据 | 有 (PE/PB/PS等) | 无 | 无 | 有（计算得出） |
-| 财务数据 | 有（逐股查询） | 有（批量ZIP，更快） | 无 | 有（逐股查询） |
-| 历史起始 | 2015年 | 2015年 | 完整历史 | 完整历史 |
-| API Key | 不需要 | 不需要 | N/A | 不需要 |
+| Feature | BaoStock | Mootdx API | TDX Official Package | yfinance (US) |
+|---------|----------|------------|---------------------|---------------|
+| Market | A-shares | A-shares | A-shares | US stocks |
+| Speed | Slower | Fast | Fastest (bulk download) | Medium |
+| Valuation Data | Yes (PE/PB/PS etc.) | No | No | Yes (computed) |
+| Financial Data | Yes (per-stock query) | Yes (bulk ZIP, faster) | No | Yes (per-stock query) |
+| History Start | 2015 | 2015 | Full history | Full history |
+| API Key | Not required | Not required | N/A | Not required |
 
-> **推荐**：使用 `scripts/download.py` 统一命令，自动让 Mootdx 负责行情和财务，BaoStock 负责估值和状态，各取所长。
+> **Recommended**: Use `scripts/download.py` unified command to automatically assign Mootdx for market data and financials, BaoStock for valuation and status, leveraging each source's strengths.
 
-### 增量更新机制
+### Incremental Update Mechanism
 
-- **行情数据**：检查是否有新交易日，无新数据时秒级跳过
-- **财务数据**：基于远程文件 hash 增量检查，仅下载有变更的季度
-- **指数成分股**：记录已下载月份，仅下载新月份
-- **中断恢复**：财务数据进度与数据在同一事务中提交，中断后可续传
+- **Market Data**: Checks for new trading days; skips in seconds when no new data
+- **Financial Data**: Incremental checks based on remote file hash; only downloads changed quarters
+- **Index Constituents**: Tracks downloaded months; only downloads new months
+- **Interrupt Recovery**: Financial data progress and data are committed in the same transaction; resumes after interruption
 
-### 数据质量
-- 数据来自 BaoStock 免费数据源
-- 仅供学习研究使用
+#### Incremental Update Workflow
 
-## 版本历史
+```bash
+# 1. Incremental download (fetches only new data, automatically skips existing)
+poetry run python scripts/download.py
 
-### v0.6.0 (2026-02-08) - 美股数据支持
-- 新增 yfinance 数据源，支持 6000+ 只美股普通股
-- 美股代码格式 `AAPL.US`，与 A 股 `{code}.{market}` 一致
-- 独立数据库 `data/us_stocks.duckdb`，与 A 股数据隔离
-- 5 阶段下载：股票列表 → 批量 OHLCV → 财务+估值 → 元数据+除权 → 全局数据
-- `yf.download()` 批量获取行情（每批 50 只），效率高
-- 支持 S&P 500 / NASDAQ-100 指数成分股（Wikipedia 爬取）
-- 增量更新：复用 `get_max_date()` 逻辑，仅下载新数据
+# 2. Export to Parquet (overwrites previous export)
+poetry run python scripts/export_parquet.py
+```
 
-### v0.5.0 (2026-02-01) - 统一下载命令
-- 新增 `scripts/download.py` 统一下载入口
-- 自动编排 Mootdx 和 BaoStock 数据源，各取所长
-- 优化增量检测：无新交易日时秒级跳过全部股票
-- 财务数据增量：基于远程文件 hash 检测变更
-- 指数成分股增量：记录已下载月份避免重复
-- 修复 Mootdx Affair API 返回值处理
-- 修复 DuckDB `changes()` 函数兼容性
-- 自动过滤停牌股票的空行数据
+Step 1 automatically detects the latest date of existing data in DuckDB and only downloads the delta. When there are no new trading days, all stocks are skipped in seconds.
 
-### v0.4.0 (2026-01-30) - DuckDB + Parquet 架构
-- 存储格式从 HDF5 迁移到 DuckDB + Parquet
-- 添加涨跌停价计算（导出时基于 preclose）
-- 添加 TTM 指标计算（导出时用 SQL window function）
-- 添加除权除息数据下载
-- 添加股本数据（total_shares/a_floats）
-- 优化增量更新逻辑
-- 清理废弃代码和文档
+### Data Quality
+- Data sourced from BaoStock free data service
+- For research and educational purposes only
 
-### v0.3.0 (2025-11-24) - 质量与架构优化版
-- 实现市值字段计算
-- 修复 TTM 指标计算
-- 添加数据验证器
-- 提取 BaseFetcher 基类
+## Version History
 
-### v0.2.0 (2025-11-22) - 性能优化版
-- 实现统一数据获取，API 调用减少 33%
-- 优化 HDF5 写入逻辑
+### v0.6.0 (2026-02-08) - US Stock Support
+- Added yfinance data source supporting 6,000+ US common stocks
+- US stock ticker format `AAPL.US`, consistent with A-shares `{code}.{market}`
+- Separate database `data/us_stocks.duckdb`, isolated from A-share data
+- 5-phase download: stock list -> bulk OHLCV -> financials+valuation -> metadata+corporate actions -> global data
+- `yf.download()` batch market data (50 per batch) for efficiency
+- S&P 500 / NASDAQ-100 index constituents (scraped from Wikipedia)
+- Incremental updates: reuses `get_max_date()` logic, only downloads new data
 
-### v0.1.0 (2024-11-14) - 初始版本
-- 基础数据下载功能
-- BaoStock 数据源集成
+### v0.5.0 (2026-02-01) - Unified Download Command
+- Added `scripts/download.py` unified download entry point
+- Automatic orchestration of Mootdx and BaoStock sources, leveraging strengths
+- Optimized incremental detection: skips all stocks in seconds when no new trading days
+- Financial data incremental: detects changes via remote file hash
+- Index constituents incremental: tracks downloaded months to avoid duplicates
+- Fixed Mootdx Affair API return value handling
+- Fixed DuckDB `changes()` function compatibility
+- Auto-filters empty rows for suspended stocks
 
-## 相关链接
+### v0.4.0 (2026-01-30) - DuckDB + Parquet Architecture
+- Migrated storage from HDF5 to DuckDB + Parquet
+- Added limit-up/down price calculation (computed at export from preclose)
+- Added TTM metric calculation (SQL window functions at export)
+- Added corporate action data download
+- Added share capital data (total_shares/a_floats)
+- Optimized incremental update logic
+- Cleaned up deprecated code and docs
+
+### v0.3.0 (2025-11-24) - Quality & Architecture Optimization
+- Implemented market cap field calculation
+- Fixed TTM metric calculation
+- Added data validator
+- Extracted BaseFetcher base class
+
+### v0.2.0 (2025-11-22) - Performance Optimization
+- Implemented unified data fetching, reducing API calls by 33%
+- Optimized HDF5 write logic
+
+### v0.1.0 (2024-11-14) - Initial Release
+- Basic data download functionality
+- BaoStock data source integration
+
+## Related Links
 
 - **SimTradeLab**: https://github.com/kay-ou/SimTradeLab
 - **BaoStock**: http://baostock.com/
 - **Mootdx**: https://github.com/mootdx/mootdx
 - **yfinance**: https://github.com/ranaroussi/yfinance
 
-## 许可证
+## License
 
-本项目采用 AGPL-3.0 许可证。详见 [LICENSE](LICENSE) 文件。
+This project is licensed under AGPL-3.0. See the [LICENSE](LICENSE) file for details.
 
 ---
 
-**项目状态**: 生产就绪 | **当前版本**: v0.6.0 | **最后更新**: 2026-02-08
+**Status**: Production Ready | **Version**: v0.6.0 | **Last Updated**: 2026-02-08

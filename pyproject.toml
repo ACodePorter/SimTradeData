@@ -6,7 +6,7 @@ authors = [
     {name = "kayou",email = "kayou@duck.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.12,<4.0"
+requires-python = ">=3.10,<4.0"
 dependencies = [
     "baostock>=0.8.9,<0.9.0",
     "tqdm>=4.67.1,<5.0.0",
