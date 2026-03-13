@@ -2,11 +2,18 @@
 Base fetcher class for all data fetchers
 
 This module provides the base class with common login/logout/context manager
-functionality to eliminate code duplication across fetchers.
+functionality to eliminate code duplication across fetchers. Integrates
+resilience infrastructure (cooldown, circuit breaker, monitor) so that
+subclasses get automatic request tracking and protection.
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
+
+from simtradedata.resilience.circuit_breaker import CircuitBreaker
+from simtradedata.resilience.cooldown import cooldown_manager
+from simtradedata.resilience.monitor import get_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +27,18 @@ class BaseFetcher(ABC):
     - Context manager support (with statement)
     - Destructor cleanup
     - Error handling
+    - Resilience: cooldown, circuit breaker, request monitoring
 
     Subclasses only need to implement _do_login() and _do_logout()
     """
 
+    source_name: str = "unknown"
+
     def __init__(self):
         self._logged_in = False
+        self._cooldown = cooldown_manager
+        self._monitor = get_monitor()
+        self._circuit_breaker = CircuitBreaker(self.source_name)
 
     @abstractmethod
     def _do_login(self):
@@ -70,6 +83,82 @@ class BaseFetcher(ABC):
             finally:
                 self._logged_in = False
                 logger.info(f"{self.__class__.__name__} logout complete")
+
+    def _make_request(self, func, *args, **kwargs):
+        """Execute a data source request with resilience protection.
+
+        Checks cooldown and circuit breaker state before calling func.
+        Records success/failure metrics in monitor, circuit breaker,
+        and cooldown manager.
+
+        Args:
+            func: Callable to execute.
+            *args: Positional arguments forwarded to func.
+            **kwargs: Keyword arguments forwarded to func.
+
+        Returns:
+            The return value of func, or None if the request was skipped
+            due to cooldown or open circuit breaker.
+
+        Raises:
+            Exception: Re-raises any exception from func after recording
+                the failure.
+        """
+        source = self.source_name
+
+        if self._cooldown.is_in_cooldown(source):
+            logger.debug(
+                "Skipping request for '%s': source is in cooldown", source,
+            )
+            return None
+
+        if not self._circuit_breaker.is_available():
+            logger.debug(
+                "Skipping request for '%s': circuit breaker is open", source,
+            )
+            return None
+
+        start = time.monotonic()
+        try:
+            result = func(*args, **kwargs)
+            elapsed = time.monotonic() - start
+            self._monitor.record_request(source, success=True,
+                                         response_time=elapsed)
+            self._circuit_breaker.record_success()
+            self._cooldown.record_success(source)
+            return result
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            error_type = self._classify_error(e)
+            self._monitor.record_request(source, success=False,
+                                         response_time=elapsed,
+                                         error=str(e))
+            self._circuit_breaker.record_failure()
+            self._cooldown.record_failure(source, error_type)
+            raise
+
+    @staticmethod
+    def _classify_error(error) -> str:
+        """Classify an exception into an error category for cooldown.
+
+        Args:
+            error: The exception to classify.
+
+        Returns:
+            One of "rate_limit", "forbidden", "timeout",
+            "connection_error", or "default".
+        """
+        msg = str(error).lower()
+
+        if "429" in msg or "rate limit" in msg:
+            return "rate_limit"
+        if "403" in msg or "forbidden" in msg:
+            return "forbidden"
+        if isinstance(error, TimeoutError) or "timeout" in msg:
+            return "timeout"
+        if isinstance(error, ConnectionError) or "connection" in msg:
+            return "connection_error"
+        return "default"
 
     def __enter__(self):
         """Context manager entry - login"""
