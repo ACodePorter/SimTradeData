@@ -892,7 +892,7 @@ class DuckDBWriter:
     # Export to Parquet
     # ========================================
 
-    def export_to_parquet(self, output_dir: str) -> None:
+    def export_to_parquet(self, output_dir: str, market: str = "cn") -> None:
         """Export all data to PTrade Parquet format"""
         output_path = Path(output_dir)
 
@@ -900,16 +900,16 @@ class DuckDBWriter:
             (output_path / subdir).mkdir(parents=True, exist_ok=True)
 
         logger.info("Exporting stocks...")
-        self._export_per_symbol_table("stocks", output_path / "stocks")
+        self._export_per_symbol_table("stocks", output_path / "stocks", market=market)
 
         logger.info("Exporting exrights...")
-        self._export_per_symbol_table("exrights", output_path / "exrights")
+        self._export_per_symbol_table("exrights", output_path / "exrights", market=market)
 
         logger.info("Exporting fundamentals...")
-        self._export_per_symbol_table("fundamentals", output_path / "fundamentals")
+        self._export_per_symbol_table("fundamentals", output_path / "fundamentals", market=market)
 
         logger.info("Exporting valuation...")
-        self._export_per_symbol_table("valuation", output_path / "valuation")
+        self._export_per_symbol_table("valuation", output_path / "valuation", market=market)
 
         logger.info("Exporting metadata...")
         self._export_metadata(output_path / "metadata")
@@ -921,7 +921,7 @@ class DuckDBWriter:
 
         logger.info(f"Export complete: {output_path}")
 
-    def _export_per_symbol_table(self, table: str, output_dir: Path) -> None:
+    def _export_per_symbol_table(self, table: str, output_dir: Path, market: str = "cn") -> None:
         """Export table to per-symbol Parquet files using DuckDB COPY"""
         symbols = self.get_existing_stocks(table)
 
@@ -936,7 +936,7 @@ class DuckDBWriter:
 
             if table == "stocks":
                 # Calculate high_limit and low_limit during export
-                self._export_stocks_with_limits(symbol_escaped, output_file)
+                self._export_stocks_with_limits(symbol_escaped, output_file, market=market)
             elif table == "fundamentals":
                 # Calculate TTM indicators during export
                 self._export_fundamentals_with_ttm(symbol_escaped, output_file)
@@ -954,15 +954,28 @@ class DuckDBWriter:
 
         logger.info(f"Exported {len(symbols)} {table} files")
 
-    def _export_stocks_with_limits(self, symbol_escaped: str, output_file: Path) -> None:
+    def _export_stocks_with_limits(self, symbol_escaped: str, output_file: Path, market: str = "cn") -> None:
         """
         Export stocks data with calculated price limits
 
         Price limit rules:
+        - US stocks: no price limits (NULL)
         - Normal stocks: ±10%
         - ST stocks: ±5%
         - ChiNext (300xxx, 301xxx) / STAR (688xxx, 689xxx): ±20% after 2020-08-24
         """
+        if market == "us":
+            self.conn.execute(f"""
+                COPY (
+                    SELECT date, open, close, high, low,
+                        NULL AS high_limit, NULL AS low_limit,
+                        preclose, volume, money
+                    FROM stocks
+                    WHERE symbol = '{symbol_escaped}'
+                    ORDER BY date
+                ) TO '{output_file}' (FORMAT PARQUET)
+            """)
+            return
         # Extract numeric code prefix to determine board type
         code_prefix = symbol_escaped[:3]
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Export data from DuckDB and release to GitHub.
-# Usage: bash scripts/release_data.sh [version]
+# Usage: bash scripts/release_data.sh [--market cn|us] [version]
 #
 # This script:
 # 1. Runs DuckDB export_to_parquet → output/
@@ -14,7 +14,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$PROJECT_ROOT/output"
-DB_PATH="$PROJECT_ROOT/data/simtradedata.duckdb"
+
+# Parse arguments
+MARKET="cn"
+VERSION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --market) MARKET="$2"; shift 2 ;;
+    *) VERSION="$1"; shift ;;
+  esac
+done
+
+MARKET=$(echo "$MARKET" | tr '[:upper:]' '[:lower:]')
+if [[ "$MARKET" != "cn" && "$MARKET" != "us" ]]; then
+  echo "ERROR: --market must be cn or us"
+  exit 1
+fi
+
+if [ "$MARKET" = "us" ]; then
+  DB_PATH="$PROJECT_ROOT/data/us_stocks.duckdb"
+else
+  DB_PATH="$PROJECT_ROOT/data/simtradedata.duckdb"
+fi
 
 if [ ! -f "$DB_PATH" ]; then
   echo "ERROR: $DB_PATH not found. Run download first."
@@ -22,12 +43,12 @@ if [ ! -f "$DB_PATH" ]; then
 fi
 
 # 1. Export
-echo "=== Exporting from DuckDB ==="
+echo "=== Exporting $MARKET data from DuckDB ==="
 cd "$PROJECT_ROOT"
 poetry run python -c "
 from simtradedata.writers.duckdb_writer import DuckDBWriter
 w = DuckDBWriter('$DB_PATH')
-w.export_to_parquet('$OUTPUT_DIR')
+w.export_to_parquet('$OUTPUT_DIR', market='$MARKET')
 w.close()
 "
 
@@ -39,12 +60,12 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 EXPORTED_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])")
-VERSION="${1:-$EXPORTED_VERSION}"
-TAG="data-v${VERSION}"
-ARCHIVE="/tmp/simtradelab-data-${VERSION}.tar.gz"
+VERSION="${VERSION:-$EXPORTED_VERSION}"
+TAG="data-${MARKET}-v${VERSION}"
+ARCHIVE="/tmp/simtradelab-data-${MARKET}-${VERSION}.tar.gz"
 
 echo ""
-echo "=== Packaging v${VERSION} ==="
+echo "=== Packaging ${MARKET} v${VERSION} ==="
 tar -czf "$ARCHIVE" -C "$OUTPUT_DIR" .
 
 SIZE=$(ls -lh "$ARCHIVE" | awk '{print $5}')
@@ -58,8 +79,8 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   gh release upload "$TAG" "$ARCHIVE" --clobber
 else
   gh release create "$TAG" \
-    --title "SimTradeData v${VERSION}" \
-    --notes "Data version ${VERSION}" \
+    --title "SimTradeData ${MARKET} v${VERSION}" \
+    --notes "Data version ${VERSION} (${MARKET})" \
     "$ARCHIVE"
 fi
 

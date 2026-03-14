@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def export_to_parquet(db_path: str, output_dir: str) -> None:
+def export_to_parquet(db_path: str, output_dir: str, market: str = "cn") -> None:
     """
     Export DuckDB to PTrade Parquet format
 
@@ -45,7 +45,7 @@ def export_to_parquet(db_path: str, output_dir: str) -> None:
     writer = DuckDBWriter(db_path=db_path)
 
     try:
-        writer.export_to_parquet(output_dir)
+        writer.export_to_parquet(output_dir, market=market)
 
         output_path = Path(output_dir)
 
@@ -101,10 +101,20 @@ def main():
         default="data/parquet",
         help="Output directory for Parquet files (default: data/parquet)",
     )
+    parser.add_argument(
+        "--market",
+        choices=["cn", "us"],
+        default="cn",
+        help="Market to export (default: cn)",
+    )
 
     args = parser.parse_args()
 
-    export_to_parquet(args.db, args.output)
+    db_path = args.db
+    if args.market == "us":
+        db_path = "data/us_stocks.duckdb"
+
+    export_to_parquet(db_path, args.output, market=args.market)
 
 
 if __name__ == "__main__":

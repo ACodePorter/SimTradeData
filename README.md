@@ -72,11 +72,19 @@ data/
 
 ### Option 1: Download Pre-Built Data (Recommended)
 
-Download the latest `simtradelab-data-*.tar.gz` from [Releases](https://github.com/kay-ou/SimTradeData/releases):
+Download the latest data from [Releases](https://github.com/kay-ou/SimTradeData/releases):
+
+- **A-shares**: `data-cn-v*` release → extract to `data/cn/`
+- **US stocks**: `data-us-v*` release → extract to `data/us/`
 
 ```bash
-# Extract to SimTradeLab data directory
-tar -xzf simtradelab-data-*.tar.gz -C /path/to/SimTradeLab/data/
+# A-shares
+mkdir -p /path/to/SimTradeLab/data/cn
+tar -xzf simtradelab-data-cn-*.tar.gz -C /path/to/SimTradeLab/data/cn/
+
+# US stocks
+mkdir -p /path/to/SimTradeLab/data/us
+tar -xzf simtradelab-data-us-*.tar.gz -C /path/to/SimTradeLab/data/us/
 ```
 
 ### Option 2: Download Data Yourself
@@ -201,14 +209,30 @@ poetry run python scripts/download_tdx_day.py --file hsjday.zip
 #### 3. Export to Parquet
 
 ```bash
-# Export to PTrade-compatible Parquet format
+# Export A-shares (default)
 poetry run python scripts/export_parquet.py
+
+# Export US stocks
+poetry run python scripts/export_parquet.py --market us
 
 # Specify output directory
 poetry run python scripts/export_parquet.py --output data/parquet
 ```
 
-#### 4. Use in SimTradeLab
+#### 4. Release to GitHub (Maintainer)
+
+```bash
+# Release A-shares data
+bash scripts/release_data.sh --market cn
+
+# Release US stock data
+bash scripts/release_data.sh --market us
+
+# Specify version
+bash scripts/release_data.sh --market cn 1.3.0
+```
+
+#### 5. Use in SimTradeLab
 
 ```bash
 # Copy Parquet files to SimTradeLab data directory
@@ -227,7 +251,8 @@ SimTradeData/
 │   ├── download_tdx_day.py        # TDX official daily data package download/import
 │   ├── download_us.py             # US stock download script (yfinance)
 │   ├── import_tdx_day.py          # TDX .day file import script
-│   └── export_parquet.py          # Parquet export script
+│   ├── export_parquet.py          # Parquet export script
+│   └── release_data.sh            # GitHub Release publishing script
 ├── simtradedata/
 │   ├── router/
 │   │   ├── smart_router.py      # SmartRouter - smart data source routing

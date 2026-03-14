@@ -130,6 +130,7 @@ class USDownloader:
         symbols: list[str],
         start_date: str,
         end_date: str,
+        pbar=None,
     ) -> int:
         """
         Download OHLCV data for a batch of symbols.
@@ -150,34 +151,35 @@ class USDownloader:
             if sym_start < earliest_start:
                 earliest_start = sym_start
 
-        if earliest_start > end_date:
+        if earliest_start >= end_date:
+            if pbar:
+                pbar.update(len(symbols))
             return 0  # All symbols up to date
 
-        # Batch download
-        data = self.fetcher.fetch_batch_ohlcv(symbols, earliest_start, end_date)
+        # Batch download (OHLCV + adjust factors from single request)
+        data, adj_data = self.fetcher.fetch_batch_ohlcv(symbols, earliest_start, end_date)
         if not data:
+            if pbar:
+                pbar.update(len(symbols))
             return 0
-
-        # Also get adjust factors in the same batch
-        adj_data = self.fetcher.fetch_adjust_factors(symbols, earliest_start, end_date)
 
         # Write per-symbol
         success = 0
         self.writer.begin()
         try:
             for sym in symbols:
-                if sym not in data:
-                    continue
-
-                df = data[sym]
-                sym_start = symbol_starts.get(sym, start_date)
-
-                # Filter to only new data
-                df = df[df.index >= pd.Timestamp(sym_start)]
-                if df.empty:
-                    continue
-
                 try:
+                    if sym not in data:
+                        continue
+
+                    df = data[sym]
+                    sym_start = symbol_starts.get(sym, start_date)
+
+                    # Filter to only new data
+                    df = df[df.index >= pd.Timestamp(sym_start)]
+                    if df.empty:
+                        continue
+
                     self.writer.write_market_data(sym, df)
 
                     # Write adjust factors
@@ -191,6 +193,9 @@ class USDownloader:
                 except Exception as e:
                     logger.warning(f"Failed to write OHLCV for {sym}: {e}")
                     self.failed_stocks.append(sym)
+                finally:
+                    if pbar:
+                        pbar.update(1)
 
             self.writer.commit()
         except Exception:
@@ -221,17 +226,14 @@ class USDownloader:
         try:
             for sym in symbols:
                 try:
-                    # Fundamentals
-                    fund_df = self.fetcher.fetch_fundamentals(sym)
+                    ohlcv = self._load_ohlcv_from_db(sym)
+                    fund_df, val_df = self.fetcher.fetch_stock_detail(sym, ohlcv)
+
                     if not fund_df.empty:
                         self.writer.write_fundamentals(sym, fund_df)
 
-                    # Valuation (needs OHLCV from DB)
-                    ohlcv = self._load_ohlcv_from_db(sym)
-                    if not ohlcv.empty:
-                        val_df = self.fetcher.fetch_valuation_data(sym, ohlcv)
-                        if not val_df.empty:
-                            self.writer.write_valuation(sym, val_df)
+                    if not val_df.empty:
+                        self.writer.write_valuation(sym, val_df)
 
                     success += 1
                     self.fetcher._throttle()
@@ -417,82 +419,109 @@ def download_us_data(
 
         try:
             # Phase 1: Get stock list
-            print("\n--- Phase 1: Stock List ---")
+            print("\nFetching stock list...")
             stock_list = downloader.get_stock_list()
             if not stock_list:
                 print("Error: No stocks found")
                 return
             print(f"Total stocks: {len(stock_list)}")
 
+            # Filter stocks needing OHLCV update
+            needs_ohlcv = []
+            already_current = []
+            for sym in stock_list:
+                sym_start = downloader.get_incremental_start_date(sym, use_start_date)
+                if sym_start >= end_date_str:
+                    already_current.append(sym)
+                else:
+                    needs_ohlcv.append(sym)
+
+            if already_current:
+                print(f"  Resume: {len(needs_ohlcv)} need download, "
+                      f"{len(already_current)} already have latest data")
+
             # Phase 2: Batch OHLCV + adjust factors
-            print("\n--- Phase 2: Batch OHLCV + Adjust Factors ---")
-            ohlcv_batches = [
-                stock_list[i : i + OHLCV_BATCH_SIZE]
-                for i in range(0, len(stock_list), OHLCV_BATCH_SIZE)
-            ]
-            total_ohlcv = 0
+            if needs_ohlcv:
+                ohlcv_batches = [
+                    needs_ohlcv[i : i + OHLCV_BATCH_SIZE]
+                    for i in range(0, len(needs_ohlcv), OHLCV_BATCH_SIZE)
+                ]
+                total_ohlcv = 0
 
-            with tqdm(
-                total=len(stock_list),
-                desc="OHLCV download",
-                unit="stock",
-                ncols=100,
-            ) as pbar:
-                for batch in ohlcv_batches:
-                    try:
-                        n = downloader.download_ohlcv_batch(
-                            batch, use_start_date, end_date_str
-                        )
-                        total_ohlcv += n
-                    except Exception as e:
-                        logger.error(f"OHLCV batch failed: {e}")
-                    pbar.update(len(batch))
+                print(f"\nProcessing {len(needs_ohlcv)} stocks in {len(ohlcv_batches)} batches...")
+                print(f"Batch size: {OHLCV_BATCH_SIZE}")
+                print("=" * 60)
 
-            print(f"OHLCV complete: {total_ohlcv} stocks updated")
+                with tqdm(
+                    total=len(needs_ohlcv),
+                    desc="Downloading stocks",
+                    unit="stock",
+                    ncols=100,
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                ) as pbar:
+                    for batch in ohlcv_batches:
+                        try:
+                            n = downloader.download_ohlcv_batch(
+                                batch, use_start_date, end_date_str, pbar
+                            )
+                            total_ohlcv += n
+                        except Exception as e:
+                            logger.error(f"OHLCV batch failed: {e}")
+                            pbar.update(len(batch))
+
+                print("=" * 60)
+                print(f"Download complete: {total_ohlcv} updated, "
+                      f"{len(needs_ohlcv) - total_ohlcv} skipped/failed")
+            else:
+                print("\nAll stocks already have latest OHLCV data.")
 
             # Phase 3: Per-stock fundamentals + valuation
             if not skip_fundamentals:
-                print("\n--- Phase 3: Fundamentals + Valuation ---")
+                print(f"\nDownloading fundamentals for {len(stock_list)} stocks...")
+                print("=" * 60)
                 with tqdm(
                     total=len(stock_list),
                     desc="Fundamentals",
                     unit="stock",
                     ncols=100,
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
                 ) as pbar:
                     n = downloader.download_fundamentals_and_valuation(
                         stock_list, pbar
                     )
-                print(f"Fundamentals complete: {n} stocks")
-            else:
-                print("\n--- Phase 3: Skipped (--skip-fundamentals) ---")
+                print("=" * 60)
+                print(f"Fundamentals complete: {n} updated, "
+                      f"{len(stock_list) - n} skipped/failed")
 
             # Phase 4: Per-stock metadata + exrights
             if not skip_metadata:
-                print("\n--- Phase 4: Metadata + Exrights ---")
+                print(f"\nDownloading metadata for {len(stock_list)} stocks...")
+                print("=" * 60)
                 with tqdm(
                     total=len(stock_list),
                     desc="Metadata",
                     unit="stock",
                     ncols=100,
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
                 ) as pbar:
                     n = downloader.download_metadata_and_exrights(
                         stock_list, pbar
                     )
-                print(f"Metadata complete: {n} stocks")
-            else:
-                print("\n--- Phase 4: Skipped (--skip-metadata) ---")
+                print("=" * 60)
+                print(f"Metadata complete: {n} updated, "
+                      f"{len(stock_list) - n} skipped/failed")
 
             # Phase 5: Global data
-            print("\n--- Phase 5: Global Data ---")
+            print("\nDownloading benchmark & index data...")
             downloader.download_global_data(use_start_date, end_date_str)
 
         finally:
             downloader.writer.close()
 
         # Summary
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 60)
         print("Download Complete!")
-        print("=" * 70)
+        print("=" * 60)
 
         if db_path.exists():
             db_size = db_path.stat().st_size / (1024 * 1024)

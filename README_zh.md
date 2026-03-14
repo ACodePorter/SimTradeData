@@ -72,11 +72,19 @@ data/
 
 ### 方式一：直接下载现成数据（推荐）
 
-从 [Releases](https://github.com/kay-ou/SimTradeData/releases) 下载最新 `simtradelab-data-*.tar.gz`：
+从 [Releases](https://github.com/kay-ou/SimTradeData/releases) 下载最新数据：
+
+- **A股**: `data-cn-v*` release → 解压到 `data/cn/`
+- **美股**: `data-us-v*` release → 解压到 `data/us/`
 
 ```bash
-# 解压到 SimTradeLab 数据目录
-tar -xzf simtradelab-data-*.tar.gz -C /path/to/SimTradeLab/data/
+# A股
+mkdir -p /path/to/SimTradeLab/data/cn
+tar -xzf simtradelab-data-cn-*.tar.gz -C /path/to/SimTradeLab/data/cn/
+
+# 美股
+mkdir -p /path/to/SimTradeLab/data/us
+tar -xzf simtradelab-data-us-*.tar.gz -C /path/to/SimTradeLab/data/us/
 ```
 
 ### 方式二：自行下载数据
@@ -201,14 +209,30 @@ poetry run python scripts/download_tdx_day.py --file hsjday.zip
 #### 3. 导出为 Parquet
 
 ```bash
-# 导出为 PTrade 兼容的 Parquet 格式
+# 导出 A股（默认）
 poetry run python scripts/export_parquet.py
+
+# 导出美股
+poetry run python scripts/export_parquet.py --market us
 
 # 指定输出目录
 poetry run python scripts/export_parquet.py --output data/parquet
 ```
 
-#### 4. 在 SimTradeLab 中使用
+#### 4. 发布到 GitHub（维护者）
+
+```bash
+# 发布 A股数据
+bash scripts/release_data.sh --market cn
+
+# 发布美股数据
+bash scripts/release_data.sh --market us
+
+# 指定版本号
+bash scripts/release_data.sh --market cn 1.3.0
+```
+
+#### 5. 在 SimTradeLab 中使用
 
 ```bash
 # 复制 Parquet 文件到 SimTradeLab 数据目录
@@ -227,7 +251,8 @@ SimTradeData/
 │   ├── download_tdx_day.py        # TDX 官方日线数据包下载导入脚本
 │   ├── download_us.py             # 美股下载脚本（yfinance）
 │   ├── import_tdx_day.py          # TDX .day 文件导入脚本
-│   └── export_parquet.py          # Parquet 导出脚本
+│   ├── export_parquet.py          # Parquet 导出脚本
+│   └── release_data.sh            # GitHub Release 发布脚本
 ├── simtradedata/
 │   ├── router/
 │   │   ├── smart_router.py      # SmartRouter 智能数据源路由

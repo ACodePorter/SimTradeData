@@ -125,9 +125,9 @@ class YFinanceFetcher(BaseFetcher):
         symbols: list[str],
         start_date: str,
         end_date: str,
-    ) -> dict[str, pd.DataFrame]:
+    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
         """
-        Batch download OHLCV data using yf.download().
+        Batch download OHLCV data and adjust factors from a single yf.download().
 
         Args:
             symbols: List of PTrade-format symbols (e.g., ['AAPL.US', 'MSFT.US'])
@@ -135,10 +135,10 @@ class YFinanceFetcher(BaseFetcher):
             end_date: End date (YYYY-MM-DD)
 
         Returns:
-            Dict mapping PTrade symbol -> DataFrame with columns:
-            date(index), open, high, low, close, volume, money, preclose
+            Tuple of (ohlcv_dict, adjust_dict):
+            - ohlcv_dict: PTrade symbol -> DataFrame (date index, OHLCV columns)
+            - adjust_dict: PTrade symbol -> DataFrame (date, adj_a, adj_b)
         """
-        # Convert to yfinance tickers
         yf_tickers = [convert_from_ptrade_code(s, "yfinance") for s in symbols]
 
         try:
@@ -149,15 +149,17 @@ class YFinanceFetcher(BaseFetcher):
                 auto_adjust=False,
                 group_by="ticker",
                 threads=True,
+                progress=False,
             )
         except Exception as e:
             logger.error(f"yf.download failed: {e}")
-            return {}
+            return {}, {}
 
         if raw.empty:
-            return {}
+            return {}, {}
 
-        result = {}
+        ohlcv_result = {}
+        adjust_result = {}
         is_single = len(yf_tickers) == 1
 
         for ptrade_sym, yf_ticker in zip(symbols, yf_tickers):
@@ -178,6 +180,19 @@ class YFinanceFetcher(BaseFetcher):
                 if df.empty:
                     continue
 
+                # Extract adjust factors before dropping Adj Close
+                if "Close" in df.columns and "Adj Close" in df.columns:
+                    adj_rows = df.dropna(subset=["Close", "Adj Close"])
+                    if not adj_rows.empty:
+                        adj_df = pd.DataFrame({
+                            "date": adj_rows.index,
+                            "adj_a": adj_rows["Adj Close"].values / adj_rows["Close"].values,
+                            "adj_b": 0.0,
+                        })
+                        adj_df = adj_df.dropna(subset=["adj_a"])
+                        if not adj_df.empty:
+                            adjust_result[ptrade_sym] = adj_df
+
                 # Rename columns
                 df = df.rename(columns=YFINANCE_MARKET_FIELD_MAP)
 
@@ -185,7 +200,6 @@ class YFinanceFetcher(BaseFetcher):
                 df["preclose"] = df["close"].shift(1)
 
                 # Calculate approximate money (VWAP proxy)
-                # money = average_price * volume
                 df["money"] = (
                     (df["open"] + df["high"] + df["low"] + df["close"]) / 4
                     * df["volume"]
@@ -199,99 +213,51 @@ class YFinanceFetcher(BaseFetcher):
                 if "Adj Close" in df.columns:
                     df = df.drop(columns=["Adj Close"])
 
-                # Ensure date index
                 df.index.name = "date"
-
-                result[ptrade_sym] = df
+                ohlcv_result[ptrade_sym] = df
 
             except Exception as e:
                 logger.warning(f"Failed to process OHLCV for {ptrade_sym}: {e}")
                 continue
 
-        return result
-
-    # ========================================
-    # Adjust factors
-    # ========================================
-
-    def fetch_adjust_factors(
-        self,
-        symbols: list[str],
-        start_date: str,
-        end_date: str,
-    ) -> dict[str, pd.DataFrame]:
-        """
-        Batch calculate adjust factors from auto_adjust=False data.
-
-        adj_a = Adj Close / Close (backward adjustment factor)
-
-        Returns:
-            Dict mapping PTrade symbol -> DataFrame with columns: date, adj_a, adj_b
-        """
-        yf_tickers = [convert_from_ptrade_code(s, "yfinance") for s in symbols]
-
-        try:
-            raw = yf.download(
-                tickers=yf_tickers,
-                start=start_date,
-                end=end_date,
-                auto_adjust=False,
-                group_by="ticker",
-                threads=True,
-            )
-        except Exception as e:
-            logger.error(f"yf.download for adjust factors failed: {e}")
-            return {}
-
-        if raw.empty:
-            return {}
-
-        result = {}
-        is_single = len(yf_tickers) == 1
-
-        for ptrade_sym, yf_ticker in zip(symbols, yf_tickers):
-            try:
-                if is_single:
-                    df = self._flatten_columns(raw.copy())
-                else:
-                    df = self._extract_ticker(raw, yf_ticker, is_single)
-                    if df is None:
-                        continue
-
-                if "Close" not in df.columns or "Adj Close" not in df.columns:
-                    continue
-
-                df = df.dropna(subset=["Close", "Adj Close"])
-                if df.empty:
-                    continue
-
-                adj_df = pd.DataFrame({
-                    "date": df.index,
-                    "adj_a": df["Adj Close"].values / df["Close"].values,
-                    "adj_b": 0.0,
-                })
-                adj_df = adj_df.dropna(subset=["adj_a"])
-
-                result[ptrade_sym] = adj_df
-
-            except Exception as e:
-                logger.warning(f"Failed to compute adjust factors for {ptrade_sym}: {e}")
-
-        return result
+        return ohlcv_result, adjust_result
 
     # ========================================
     # Per-stock data (fundamentals, valuation, metadata, exrights)
     # ========================================
 
-    def fetch_fundamentals(self, symbol: str) -> pd.DataFrame:
+    def fetch_stock_detail(
+        self, symbol: str, ohlcv_df: pd.DataFrame
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Fetch quarterly fundamentals from yfinance financial statements.
-
-        Computes: revenue/profit growth, margins, roe, roa, current/quick ratio,
-        debt/equity, interest coverage, turnover rates.
+        Fetch fundamentals and valuation using a single Ticker object.
 
         Returns:
-            DataFrame with date index and PTrade fundamental columns.
+            Tuple of (fundamentals_df, valuation_df)
+        """
+        yf_ticker = convert_from_ptrade_code(symbol, "yfinance")
+        ticker = yf.Ticker(yf_ticker)
+
+        try:
+            income = ticker.quarterly_income_stmt
+            balance = ticker.quarterly_balance_sheet
+        except Exception as e:
+            logger.warning(f"Failed to fetch financials for {symbol}: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+
+        fund_df = self._compute_fundamentals(income, balance)
+
+        val_df = pd.DataFrame()
+        if not ohlcv_df.empty:
+            info = self._safe_get_info(ticker)
+            val_df = self._compute_valuation(ohlcv_df, income, balance, info)
+
+        return fund_df, val_df
+
+    def fetch_fundamentals(self, symbol: str) -> pd.DataFrame:
+        """
+        Fetch quarterly fundamentals. Public wrapper for smart_router.
+        For batch downloads, prefer fetch_stock_detail().
         """
         yf_ticker = convert_from_ptrade_code(symbol, "yfinance")
         ticker = yf.Ticker(yf_ticker)
@@ -303,10 +269,40 @@ class YFinanceFetcher(BaseFetcher):
             logger.warning(f"Failed to fetch financials for {symbol}: {e}")
             return pd.DataFrame()
 
+        return self._compute_fundamentals(income, balance)
+
+    def fetch_valuation_data(
+        self, symbol: str, ohlcv_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Compute daily valuation metrics. Public wrapper for smart_router.
+        For batch downloads, prefer fetch_stock_detail().
+        """
+        if ohlcv_df.empty:
+            return pd.DataFrame()
+
+        yf_ticker = convert_from_ptrade_code(symbol, "yfinance")
+        ticker = yf.Ticker(yf_ticker)
+        info = self._safe_get_info(ticker)
+
+        try:
+            income = ticker.quarterly_income_stmt
+            balance = ticker.quarterly_balance_sheet
+        except Exception:
+            income = None
+            balance = None
+
+        return self._compute_valuation(ohlcv_df, income, balance, info)
+
+    def _compute_fundamentals(
+        self,
+        income: Optional[pd.DataFrame],
+        balance: Optional[pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Compute fundamentals from pre-fetched financial statements."""
         if income is None or income.empty:
             return pd.DataFrame()
 
-        # income/balance have dates as columns, fields as rows
         quarters = sorted(income.columns)
 
         rows = []
@@ -422,50 +418,25 @@ class YFinanceFetcher(BaseFetcher):
 
         return df
 
-    def fetch_valuation_data(
-        self, symbol: str, ohlcv_df: pd.DataFrame
+    def _compute_valuation(
+        self,
+        ohlcv_df: pd.DataFrame,
+        income: Optional[pd.DataFrame],
+        balance: Optional[pd.DataFrame],
+        info: dict,
     ) -> pd.DataFrame:
-        """
-        Compute daily valuation metrics by combining price data with fundamentals.
-
-        Calculates: pe_ttm, pb, ps_ttm, turnover_rate, total_shares, a_floats.
-        ROE/ROA are forward-filled from quarterly fundamentals.
-
-        Args:
-            symbol: PTrade format symbol (e.g., 'AAPL.US')
-            ohlcv_df: Daily OHLCV DataFrame with date index
-
-        Returns:
-            DataFrame with date index and valuation columns.
-        """
-        if ohlcv_df.empty:
-            return pd.DataFrame()
-
-        yf_ticker = convert_from_ptrade_code(symbol, "yfinance")
-        ticker = yf.Ticker(yf_ticker)
-
-        # Get shares info
-        info = self._safe_get_info(ticker)
+        """Compute daily valuation from pre-fetched data."""
         shares_outstanding = info.get("sharesOutstanding")
         float_shares = info.get("floatShares")
 
         if not shares_outstanding:
             return pd.DataFrame()
 
-        # Get quarterly financial data for TTM calculations
-        try:
-            income = ticker.quarterly_income_stmt
-            balance = ticker.quarterly_balance_sheet
-        except Exception:
-            income = None
-            balance = None
-
         # Build quarterly metrics
         quarterly_metrics = {}
         if income is not None and not income.empty:
             for q_date in income.columns:
                 metrics = {}
-                # EPS TTM needs 4 quarters
                 ni = _safe_get_from_stmt(income, "Net Income", q_date)
                 rev = _safe_get_from_stmt(income, "Total Revenue", q_date)
                 bvps = None
@@ -502,18 +473,19 @@ class YFinanceFetcher(BaseFetcher):
         df["total_shares"] = float(shares_outstanding)
         df["a_floats"] = float(float_shares) if float_shares else None
 
-        # Forward-fill TTM data onto daily dates
-        df["eps_ttm"] = None
-        df["bvps"] = None
-        df["revenue_ttm"] = None
-        for q_date, vals in sorted(ttm_data.items()):
-            mask = df.index >= q_date
-            if vals["eps_ttm"] is not None:
-                df.loc[mask, "eps_ttm"] = vals["eps_ttm"]
-            if vals["bvps"] is not None:
-                df.loc[mask, "bvps"] = vals["bvps"]
-            if vals["revenue_ttm"] is not None:
-                df.loc[mask, "revenue_ttm"] = vals["revenue_ttm"]
+        # Forward-fill TTM data onto daily dates via reindex
+        if ttm_data:
+            ttm_records = [{"date": q, **v} for q, v in sorted(ttm_data.items())]
+            ttm_df = pd.DataFrame(ttm_records).set_index("date")
+            ttm_df.index = pd.to_datetime(ttm_df.index)
+            ttm_daily = ttm_df.reindex(df.index, method="ffill")
+            df["eps_ttm"] = ttm_daily["eps_ttm"]
+            df["bvps"] = ttm_daily["bvps"]
+            df["revenue_ttm"] = ttm_daily["revenue_ttm"]
+        else:
+            df["eps_ttm"] = None
+            df["bvps"] = None
+            df["revenue_ttm"] = None
 
         # Calculate ratios
         df["pe_ttm"] = None
@@ -655,6 +627,7 @@ class YFinanceFetcher(BaseFetcher):
                 start=start_date,
                 end=end_date,
                 auto_adjust=True,
+                progress=False,
             )
         except Exception as e:
             logger.error(f"Failed to fetch benchmark: {e}")

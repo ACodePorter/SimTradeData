@@ -180,7 +180,7 @@ class SmartRouter:
                     symbol, start_date, end_date,
                 )
             elif source_name == "yfinance":
-                result = fetcher.fetch_batch_ohlcv(
+                result, _ = fetcher.fetch_batch_ohlcv(
                     [symbol], start_date, end_date,
                 )
                 df = result.get(symbol, pd.DataFrame())
@@ -199,7 +199,7 @@ class SmartRouter:
 
         def fetch_from(fetcher, source_name):
             if source_name == "yfinance":
-                result = fetcher.fetch_adjust_factors(
+                _, result = fetcher.fetch_batch_ohlcv(
                     [symbol], start_date, end_date,
                 )
                 return result.get(symbol, pd.DataFrame())
@@ -335,7 +335,7 @@ class SmartRouter:
                 available = [c for c in valuation_cols if c in df.columns]
                 return df[available]
             elif source_name == "yfinance":
-                ohlcv_result = fetcher.fetch_batch_ohlcv(
+                ohlcv_result, _ = fetcher.fetch_batch_ohlcv(
                     [symbol], start_date, end_date,
                 )
                 ohlcv_df = ohlcv_result.get(symbol, pd.DataFrame())
