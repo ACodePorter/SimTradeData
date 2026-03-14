@@ -263,12 +263,9 @@ class DuckDBWriter:
             )
         """)
 
-        # Initialize version
+        # Initialize format info
         self.conn.execute("""
-            INSERT OR REPLACE INTO version_info VALUES ('version', '3.0.0')
-        """)
-        self.conn.execute("""
-            INSERT OR REPLACE INTO version_info VALUES ('format', 'duckdb')
+            INSERT OR IGNORE INTO version_info VALUES ('format', 'duckdb')
         """)
 
     def _migrate_fundamentals_progress(self) -> None:
@@ -1173,14 +1170,14 @@ class DuckDBWriter:
         # version.parquet
         result = self.conn.execute("""
             SELECT
-                (SELECT value FROM version_info WHERE key='version') as version,
+                (SELECT MAX(date)::VARCHAR FROM stocks) as version,
                 (SELECT COUNT(DISTINCT symbol) FROM stocks) as num_stocks,
                 CURRENT_DATE as export_date,
                 (SELECT MIN(date)::VARCHAR FROM stocks) as start_date
         """).fetchone()
 
         version_data = pd.DataFrame([{
-            "version": result[0] or "3.0.0",
+            "version": result[0] or "",
             "num_stocks": result[1] or 0,
             "export_date": str(result[2]),
             "start_date": result[3] or "",
@@ -1224,7 +1221,7 @@ class DuckDBWriter:
         stock_count = result[2] or 0
 
         manifest = {
-            "version": "3.0.0",
+            "version": end_date,
             "date_range": {
                 "start": start_date,
                 "end": end_date,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Export data from DuckDB and release to GitHub.
-# Usage: bash scripts/release_data.sh [--market cn|us] [version]
+# Usage: bash scripts/release_data.sh [--market cn|us|all]
 #
 # This script:
 # 1. Runs DuckDB export_to_parquet → output/
@@ -17,73 +17,86 @@ OUTPUT_DIR="$PROJECT_ROOT/output"
 
 # Parse arguments
 MARKET="cn"
-VERSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --market) MARKET="$2"; shift 2 ;;
-    *) VERSION="$1"; shift ;;
+    *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
 
 MARKET=$(echo "$MARKET" | tr '[:upper:]' '[:lower:]')
-if [[ "$MARKET" != "cn" && "$MARKET" != "us" ]]; then
-  echo "ERROR: --market must be cn or us"
+if [[ "$MARKET" != "cn" && "$MARKET" != "us" && "$MARKET" != "all" ]]; then
+  echo "ERROR: --market must be cn, us, or all"
   exit 1
 fi
 
-if [ "$MARKET" = "us" ]; then
-  DB_PATH="$PROJECT_ROOT/data/us_stocks.duckdb"
-else
-  DB_PATH="$PROJECT_ROOT/data/simtradedata.duckdb"
-fi
+release_market() {
+  local market="$1"
 
-if [ ! -f "$DB_PATH" ]; then
-  echo "ERROR: $DB_PATH not found. Run download first."
-  exit 1
-fi
+  if [ "$market" = "us" ]; then
+    local db_path="$PROJECT_ROOT/data/us_stocks.duckdb"
+  else
+    local db_path="$PROJECT_ROOT/data/simtradedata.duckdb"
+  fi
 
-# 1. Export
-echo "=== Exporting $MARKET data from DuckDB ==="
-cd "$PROJECT_ROOT"
-poetry run python -c "
+  if [ ! -f "$db_path" ]; then
+    echo "SKIP: $db_path not found"
+    return
+  fi
+
+  # 1. Export
+  echo "=== Exporting $market data from DuckDB ==="
+  cd "$PROJECT_ROOT"
+  poetry run python -c "
 from simtradedata.writers.duckdb_writer import DuckDBWriter
-w = DuckDBWriter('$DB_PATH')
-w.export_to_parquet('$OUTPUT_DIR', market='$MARKET')
+w = DuckDBWriter('$db_path')
+w.export_to_parquet('$OUTPUT_DIR', market='$market')
 w.close()
 "
 
-# Read version from exported manifest
-MANIFEST="$OUTPUT_DIR/manifest.json"
-if [ ! -f "$MANIFEST" ]; then
-  echo "ERROR: Export did not produce manifest.json"
-  exit 1
-fi
+  # Read version (data date) from exported manifest
+  local manifest="$OUTPUT_DIR/manifest.json"
+  if [ ! -f "$manifest" ]; then
+    echo "ERROR: Export did not produce manifest.json"
+    return 1
+  fi
 
-EXPORTED_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])")
-VERSION="${VERSION:-$EXPORTED_VERSION}"
-TAG="data-${MARKET}-v${VERSION}"
-ARCHIVE="/tmp/simtradelab-data-${MARKET}-${VERSION}.tar.gz"
+  local version
+  version=$(python3 -c "import json; print(json.load(open('$manifest'))['version'])")
+  local tag="data-${market}-${version}"
+  local archive="/tmp/simtradelab-data-${market}-${version}.tar.gz"
 
-echo ""
-echo "=== Packaging ${MARKET} v${VERSION} ==="
-tar -czf "$ARCHIVE" -C "$OUTPUT_DIR" .
+  # 2. Package
+  echo ""
+  echo "=== Packaging ${market} ${version} ==="
+  tar -czf "$archive" -C "$OUTPUT_DIR" .
 
-SIZE=$(ls -lh "$ARCHIVE" | awk '{print $5}')
-echo "  -> $ARCHIVE ($SIZE)"
+  local size
+  size=$(ls -lh "$archive" | awk '{print $5}')
+  echo "  -> $archive ($size)"
 
-# 3. Release
-echo ""
-echo "=== Uploading to GitHub ==="
-if gh release view "$TAG" >/dev/null 2>&1; then
-  echo "  Release $TAG exists, updating..."
-  gh release upload "$TAG" "$ARCHIVE" --clobber
+  # 3. Release
+  echo ""
+  echo "=== Uploading to GitHub ==="
+  if gh release view "$tag" >/dev/null 2>&1; then
+    echo "  Release $tag exists, updating..."
+    gh release upload "$tag" "$archive" --clobber
+  else
+    gh release create "$tag" \
+      --title "SimTradeData ${market} ${version}" \
+      --notes "Data date: ${version} (${market})" \
+      "$archive"
+  fi
+
+  rm -f "$archive"
+  echo ""
+  echo "=== Done: $(gh release view "$tag" --json url -q .url) ==="
+  echo ""
+}
+
+if [ "$MARKET" = "all" ]; then
+  release_market "cn"
+  release_market "us"
 else
-  gh release create "$TAG" \
-    --title "SimTradeData ${MARKET} v${VERSION}" \
-    --notes "Data version ${VERSION} (${MARKET})" \
-    "$ARCHIVE"
+  release_market "$MARKET"
 fi
-
-rm -f "$ARCHIVE"
-echo ""
-echo "=== Done: $(gh release view "$TAG" --json url -q .url) ==="
