@@ -557,8 +557,10 @@ class YFinanceFetcher(BaseFetcher):
         """
         Fetch ex-rights data from ticker.actions (dividends + splits).
 
-        For stock splits: 4:1 split = bonus_ps of 3.0
-        allotted_ps, rationed_ps, rationed_px are always 0 (not applicable to US).
+        Field mapping aligned with A-share adj_cache formula:
+        - allotted_ps: share multiplier from stock splits (4:1 → 3.0)
+        - bonus_ps: cash dividend per share (same as dividend column)
+        - dividend: cash dividend per share (for DividendLazyLoader)
 
         Returns:
             DataFrame with columns: date, dividend, bonus_ps, allotted_ps,
@@ -579,30 +581,31 @@ class YFinanceFetcher(BaseFetcher):
         result = pd.DataFrame(index=actions.index)
         result.index.name = "date"
 
-        # Dividends
+        # Cash dividends → both dividend and bonus_ps (formula reads bonus_ps)
         if "Dividends" in actions.columns:
             result["dividend"] = actions["Dividends"]
         else:
             result["dividend"] = 0.0
+        result["bonus_ps"] = result["dividend"]
 
-        # Stock Splits: yfinance reports ratio (e.g., 4.0 for 4:1 split)
-        # bonus_ps = split_ratio - 1 (4:1 means 3 bonus shares per share)
+        # Stock splits → allotted_ps (formula uses it in share multiplier m)
+        # yfinance reports ratio (e.g., 4.0 for 4:1 split)
+        # allotted_ps = split_ratio - 1 (4:1 means 3 bonus shares per share)
         if "Stock Splits" in actions.columns:
             splits = actions["Stock Splits"]
-            result["bonus_ps"] = splits.apply(
+            result["allotted_ps"] = splits.apply(
                 lambda x: x - 1.0 if x > 0 else 0.0
             )
         else:
-            result["bonus_ps"] = 0.0
+            result["allotted_ps"] = 0.0
 
         # Not applicable to US stocks
-        result["allotted_ps"] = 0.0
         result["rationed_ps"] = 0.0
         result["rationed_px"] = 0.0
 
         # Filter out rows where nothing happened
         result = result[
-            (result["dividend"] > 0) | (result["bonus_ps"] > 0)
+            (result["dividend"] > 0) | (result["allotted_ps"] > 0)
         ]
 
         return result

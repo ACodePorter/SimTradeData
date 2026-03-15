@@ -1005,6 +1005,8 @@ class DuckDBWriter:
             elif table == "valuation":
                 # Enrich with total_shares/a_floats from fundamentals
                 self._export_valuation_enriched(symbol_escaped, output_file)
+            elif table == "exrights" and market == "us":
+                self._export_exrights_us(symbol_escaped, output_file)
             else:
                 self.conn.execute(f"""
                     COPY (
@@ -1015,6 +1017,38 @@ class DuckDBWriter:
                 """)
 
         logger.info(f"Exported {len(symbols)} {table} files")
+
+    def _export_exrights_us(self, symbol_escaped: str, output_file: Path) -> None:
+        """Export US exrights with computed exer_forward_a/b factors"""
+        import numpy as np
+
+        df = self.conn.execute(f"""
+            SELECT * EXCLUDE (symbol) REPLACE (date::TIMESTAMP AS date)
+            FROM exrights WHERE symbol = '{symbol_escaped}' ORDER BY date
+        """).fetchdf()
+
+        if df.empty:
+            df.to_parquet(str(output_file), index=False)
+            return
+
+        n = len(df)
+        allotted = df["allotted_ps"].values
+        bonus = df["bonus_ps"].values
+        rationed = df["rationed_ps"].values
+        rationed_px = df["rationed_px"].values
+
+        # 反向累积计算前复权因子
+        fa = np.ones(n + 1, dtype="float64")
+        fb = np.zeros(n + 1, dtype="float64")
+        for i in range(n - 1, -1, -1):
+            m = 1.0 + allotted[i] + rationed[i]
+            fa[i] = fa[i + 1] / m
+            fb[i] = (fb[i + 1] - bonus[i] + rationed[i] * rationed_px[i]) / m
+
+        df["exer_forward_a"] = fa[:n]
+        df["exer_forward_b"] = fb[:n]
+
+        df.to_parquet(str(output_file), index=False, compression="zstd")
 
     def _export_stocks_with_limits(self, symbol_escaped: str, output_file: Path, market: str = "cn") -> None:
         """
