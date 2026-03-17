@@ -1430,50 +1430,60 @@ class DuckDBWriter:
         except Exception as e:
             logger.warning(f"Failed to get dates from stocks table: {e}")
 
-        # Step 3: Determine de_listed_date
+        # Step 3: Determine de_listed_date and build batch
         # Active in mootdx → '2900-01-01'
-        # Not active and last_date far from latest → last_date (likely delisted)
+        # Not active and last_date < latest → last_date (likely delisted)
         active_set = set(active_stock_names.keys())
-        latest_date = self.conn.execute(
-            "SELECT MAX(date) FROM stocks"
-        ).fetchone()[0]
+        latest_date_str = str(
+            self.conn.execute("SELECT MAX(date) FROM stocks").fetchone()[0]
+        )
 
-        # Step 4: Build and insert metadata for all known symbols
+        # Pre-load existing blocks to preserve them
+        existing_blocks = {}
+        try:
+            blocks_df = self.conn.execute(
+                "SELECT symbol, blocks FROM stock_metadata WHERE blocks IS NOT NULL"
+            ).fetchdf()
+            for _, row in blocks_df.iterrows():
+                existing_blocks[row["symbol"]] = row["blocks"]
+        except Exception:
+            pass
+
+        # Build batch rows
         all_symbols = set(stock_dates.keys()) | active_set
-        inserted = 0
+        rows = []
         for symbol in all_symbols:
-            name = active_stock_names.get(symbol)
             dates = stock_dates.get(symbol, {})
             listed_date = dates.get("listed_date")
             last_date = dates.get("last_date")
 
-            # Determine de_listed_date
             if symbol in active_set:
                 de_listed_date = "2900-01-01"
-            elif last_date and latest_date and str(last_date) < str(latest_date):
+            elif last_date and last_date < latest_date_str:
                 de_listed_date = last_date
             else:
                 de_listed_date = "2900-01-01"
 
-            # Preserve existing blocks data
-            existing_blocks = self.conn.execute(
-                "SELECT blocks FROM stock_metadata WHERE symbol = ?",
-                [symbol],
-            ).fetchone()
-            blocks = existing_blocks[0] if existing_blocks else None
+            rows.append((
+                symbol,
+                active_stock_names.get(symbol),
+                listed_date,
+                de_listed_date,
+                existing_blocks.get(symbol),
+            ))
 
-            self.conn.execute(
-                """
-                INSERT OR REPLACE INTO stock_metadata
-                (symbol, stock_name, listed_date, de_listed_date, blocks)
-                VALUES (?, ?, ?, ?, ?)
-            """,
-                [symbol, name, listed_date, de_listed_date, blocks],
-            )
-            inserted += 1
+        # Batch insert via temp table
+        batch_df = pd.DataFrame(
+            rows,
+            columns=["symbol", "stock_name", "listed_date", "de_listed_date", "blocks"],
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stock_metadata "
+            "SELECT * FROM batch_df"
+        )
 
         logger.info(
-            f"stock_metadata population complete: {inserted} records, "
+            f"stock_metadata population complete: {len(rows)} records, "
             f"{len(active_set)} active stocks"
         )
 
