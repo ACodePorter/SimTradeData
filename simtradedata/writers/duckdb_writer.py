@@ -1275,7 +1275,9 @@ class DuckDBWriter:
                     CASE WHEN s.volume > 0 THEN s.close END AS close,
                     CASE WHEN s.volume > 0 THEN s.high END AS high,
                     CASE WHEN s.volume > 0 THEN s.low END AS low,
-                    s.preclose,
+                    -- Keep preclose only on trading days; during suspension
+                    -- it will be recomputed as LAG(close) in the final step.
+                    CASE WHEN s.volume > 0 THEN s.preclose END AS preclose,
                     COALESCE(s.volume, 0) AS volume,
                     COALESCE(s.money, 0.0) AS money
                 FROM lifespans ls
@@ -1391,7 +1393,7 @@ class DuckDBWriter:
                     CASE WHEN r.volume > 0 THEN r.close END AS close,
                     CASE WHEN r.volume > 0 THEN r.high END AS high,
                     CASE WHEN r.volume > 0 THEN r.low END AS low,
-                    r.preclose,
+                    CASE WHEN r.volume > 0 THEN r.preclose END AS preclose,
                     COALESCE(r.volume, 0) AS volume,
                     COALESCE(r.money, 0.0) AS money
                 FROM _trade_cal tc
