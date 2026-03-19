@@ -1129,14 +1129,54 @@ class DuckDBWriter:
         - ST stocks: ±5%
         - ChiNext (300xxx, 301xxx) / STAR (688xxx, 689xxx): ±20% after 2020-08-24
         """
-        # CTE fills missing preclose with previous day's close
+        # CTE fills suspension days (volume=0, OHLC = last close)
+        # and missing preclose with previous day's close.
+        # trade_cal: all trading days derived from stocks table
+        # raw: actual data rows for this symbol
+        # joined: left join ensures every trading day within stock's lifespan has a row
+        # gap_filled: forward-fill close into suspension gaps
+        # filled: compute preclose from gap_filled close
         base_cte = f"""
-            WITH filled AS (
-                SELECT date::TIMESTAMP_NS AS date, open, close, high, low,
+            WITH trade_cal AS (
+                SELECT DISTINCT date FROM stocks
+            ),
+            raw AS (
+                SELECT date, open, close, high, low, preclose, volume, money
+                FROM stocks WHERE symbol = '{symbol_escaped}'
+            ),
+            lifespan AS (
+                SELECT MIN(date) AS first_date, MAX(date) AS last_date FROM raw
+            ),
+            joined AS (
+                SELECT
+                    tc.date,
+                    r.open, r.close, r.high, r.low, r.preclose,
+                    COALESCE(r.volume, 0) AS volume,
+                    COALESCE(r.money, 0.0) AS money
+                FROM trade_cal tc
+                CROSS JOIN lifespan ls
+                LEFT JOIN raw r ON tc.date = r.date
+                WHERE tc.date >= ls.first_date AND tc.date <= ls.last_date
+            ),
+            gap_filled AS (
+                SELECT
+                    date,
+                    COALESCE(open, last_value(close IGNORE NULLS) OVER w) AS open,
+                    COALESCE(close, last_value(close IGNORE NULLS) OVER w) AS close,
+                    COALESCE(high, last_value(close IGNORE NULLS) OVER w) AS high,
+                    COALESCE(low, last_value(close IGNORE NULLS) OVER w) AS low,
+                    preclose,
+                    volume,
+                    money
+                FROM joined
+                WINDOW w AS (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            ),
+            filled AS (
+                SELECT
+                    date::TIMESTAMP_NS AS date, open, close, high, low,
                     COALESCE(preclose, LAG(close) OVER (ORDER BY date)) AS preclose,
                     volume, money
-                FROM stocks
-                WHERE symbol = '{symbol_escaped}'
+                FROM gap_filled
             )
         """
 
