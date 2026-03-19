@@ -1098,13 +1098,18 @@ class DuckDBWriter:
         rationed = df["rationed_ps"].values
         rationed_px = df["rationed_px"].values
 
-        # 反向累积计算前复权因子
+        # Backward accumulation of forward-adjustment factors.
+        # Continuity at each ex-date requires:
+        #   fa[i] * P_raw + fb[i] = fa[i+1] * P_ex + fb[i+1]
+        # where P_ex = (P_raw - bonus + rat*rat_px) / m, giving:
+        #   fa[i] = fa[i+1] / m
+        #   fb[i] = fa[i+1] * (-bonus + rat*rat_px) / m + fb[i+1]
         fa = np.ones(n + 1, dtype="float64")
         fb = np.zeros(n + 1, dtype="float64")
         for i in range(n - 1, -1, -1):
             m = 1.0 + allotted[i] + rationed[i]
             fa[i] = fa[i + 1] / m
-            fb[i] = (fb[i + 1] - bonus[i] + rationed[i] * rationed_px[i]) / m
+            fb[i] = fa[i + 1] * (-bonus[i] + rationed[i] * rationed_px[i]) / m + fb[i + 1]
 
         df["exer_forward_a"] = fa[:n]
         df["exer_forward_b"] = fb[:n]
@@ -1141,7 +1146,7 @@ class DuckDBWriter:
             for i in range(n - 1, -1, -1):
                 m = 1.0 + allotted[i] + rationed[i]
                 fa[i] = fa[i + 1] / m
-                fb[i] = (fb[i + 1] - bonus[i] + rationed[i] * rationed_px[i]) / m
+                fb[i] = fa[i + 1] * (-bonus[i] + rationed[i] * rationed_px[i]) / m + fb[i + 1]
 
             df["exer_forward_a"] = fa[:n]
             df["exer_forward_b"] = fb[:n]
